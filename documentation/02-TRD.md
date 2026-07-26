@@ -1,7 +1,7 @@
 # Technical Requirements Document (TRD)
 ## GitHub Developer Dashboard
 
-**Version:** 1.0
+**Version:** 1.1 (Updated — MongoDB Atlas + Gemini API)
 **Status:** Draft for Review
 
 ---
@@ -16,12 +16,12 @@
 | Heatmap | Custom SVG grid or `react-calendar-heatmap` | GitHub-style contribution grid |
 | Backend | Next.js API routes (Node.js) | Avoids running a separate server; keeps project simple to deploy |
 | Auth (to GitHub) | GitHub OAuth App (or Personal Access Token for MVP) | Needed for higher rate limits + GraphQL contribution data |
-| Database / Cache | Redis (Upstash) or Supabase (Postgres) | Cache API responses and AI summaries to avoid rate limits & repeat cost |
-| AI Summary | Claude API (Anthropic) or OpenAI API | Generates the natural-language portfolio summary |
+| Database / Cache | **MongoDB Atlas** (free M0 tier) | Document-shaped data (nested profile/repos/languages) maps naturally to Mongo; TTL indexes give free automatic cache expiry — no separate Redis needed |
+| AI Summary | **Google Gemini API** (free tier) | No-cost usage for a portfolio project, generous free-tier limits, good enough quality for a short summary |
 | Deployment | Vercel | Free tier, native Next.js support |
 | Version Control | Git + GitHub | Also doubles as your own dashboard's test data |
 
-> These are recommendations for a solo/portfolio build. Swap any layer (e.g., Express instead of Next.js API routes, Postgres instead of Redis) without changing the overall architecture.
+> Swap any layer without changing the overall architecture — the service layer isolates GitHub, DB, and AI calls behind their own modules (see §9).
 
 ## 2. Architecture Overview
 
@@ -34,18 +34,19 @@
                                      ┌──────────────────────┼───────────────────────┐
                                      ▼                      ▼                       ▼
                             ┌────────────────┐    ┌──────────────────┐   ┌───────────────────┐
-                            │ GitHub REST API │    │ GitHub GraphQL   │   │  AI Summary API    │
-                            │ (repos, user)   │    │ (contributions)  │   │  (Claude/OpenAI)   │
+                            │ GitHub REST API │    │ GitHub GraphQL   │   │  Gemini API         │
+                            │ (repos, user)   │    │ (contributions)  │   │  (AI summary)       │
                             └────────────────┘    └──────────────────┘   └───────────────────┘
                                      │
                                      ▼
                             ┌────────────────────┐
-                            │  Cache Layer        │
-                            │  (Redis / Postgres) │
+                            │  MongoDB Atlas       │
+                            │  (cache collection,  │
+                            │   TTL auto-expiry)   │
                             └────────────────────┘
 ```
 
-The frontend never calls GitHub or the AI API directly — all external calls are proxied through Next.js API routes (a Backend-for-Frontend layer). This keeps API tokens server-side and lets you cache responses.
+The frontend never calls GitHub or Gemini directly — all external calls are proxied through Next.js API routes (a Backend-for-Frontend layer). This keeps API keys server-side and lets MongoDB absorb repeat lookups.
 
 ## 3. GitHub API Integration
 
@@ -67,36 +68,39 @@ The frontend never calls GitHub or the AI API directly — all external calls ar
 
 ### 3.3 Rate Limiting Strategy
 - Authenticated requests: 5,000/hr (REST), separate points-based limit for GraphQL.
-- Server-side cache (see §5) absorbs repeat lookups so real GitHub calls only happen on cache miss/expiry.
+- MongoDB cache (see §5) absorbs repeat lookups so real GitHub calls only happen on cache miss/expiry.
 - Show a friendly "rate limit reached, try again in X minutes" UI state if exhausted.
 
-## 4. AI Summary Integration
+## 4. AI Summary Integration — Google Gemini API
 
-- On dashboard load (cache miss), send an aggregated JSON payload (languages, top repos, contribution stats — **not raw code**) to the LLM with a prompt requesting a 3–5 sentence portfolio summary.
-- Response is cached per username for 24 hours to control cost and latency.
+- On dashboard load (cache miss), send an aggregated JSON payload (languages, top repos, contribution stats — **not raw code**) to Gemini with a prompt requesting a 3–5 sentence portfolio summary.
+- Use the free-tier model (e.g., Gemini 2.x Flash-class model — check current free-tier model availability at build time, as Google updates these) via the `@google/generative-ai` SDK.
+- Response is cached in MongoDB per username for 24 hours to stay comfortably within free-tier **requests-per-minute and requests-per-day** limits.
 - Store the model name/version alongside the cached summary for transparency.
 - Handle failures gracefully — dashboard should still render fully if the AI call fails; summary section shows a retry option instead.
+- Because the free tier is rate-limited, add a basic in-app cooldown on the "Regenerate" button (e.g., 1 regeneration per user per few minutes) so a burst of clicks can't exhaust the daily quota.
 
-## 5. Caching Strategy
+## 5. Caching Strategy — MongoDB TTL Indexes
+
+Instead of a separate Redis layer, MongoDB itself handles cache expiry natively via a **TTL index**: MongoDB automatically deletes a document once a timestamp field passes a configured age. This removes the need for a second data store.
 
 | Data | TTL | Storage |
 |---|---|---|
-| User profile + repos | 1 hour | Redis / DB |
-| Language breakdown | 1 hour | Redis / DB |
-| Contribution calendar | 6 hours | Redis / DB |
-| AI summary | 24 hours | Redis / DB |
+| User profile + repos + languages + achievements | 1 hour | MongoDB (`github_profiles` collection) |
+| Contribution calendar + streaks | 6 hours | Same document (nested field) or separate `contributions` collection |
+| AI summary | 24 hours | Same document (nested field) or separate `ai_summaries` collection |
 
-- Cache key pattern: `github:{username}:{resource}`
-- On new/expired cache, fetch fresh data from GitHub, recompute derived stats (streaks, achievements), store, and serve.
+- Recommended approach: **one document per username** in a single collection, with nested sub-objects for repos/languages/achievements/contributions/AI summary, each carrying its own `cachedAt` timestamp so sections can expire independently even though they live in one document (see Backend Schema doc for the exact structure).
+- On a read, the API route checks `cachedAt` age itself (not just the TTL index, since TTL deletion runs in the background every ~60s and isn't instant) — if stale, refetch that section from GitHub/Gemini and update just that nested field.
 
 ## 6. Non-Functional Requirements
 
 | Category | Requirement |
 |---|---|
 | Performance | Dashboard interactive within 3s on cache hit; < 6s on cold cache |
-| Reliability | Graceful degradation if GitHub or AI API is down (partial dashboard still renders) |
-| Security | No tokens/secrets exposed client-side; all external calls proxied server-side |
-| Scalability | Stateless API routes; cache layer absorbs read load |
+| Reliability | Graceful degradation if GitHub or Gemini API is down (partial dashboard still renders) |
+| Security | No tokens/keys exposed client-side; all external calls proxied server-side |
+| Scalability | Stateless API routes; MongoDB Atlas free tier handles read/write load for a portfolio-scale project |
 | Accessibility | Charts have text alternatives (e.g., data table toggle); color contrast meets WCAG AA |
 | Responsiveness | Fully usable on mobile (375px) through desktop (1440px+) |
 
@@ -107,13 +111,14 @@ The frontend never calls GitHub or the AI API directly — all external calls ar
 | Username not found | Show inline "No GitHub user found for '{username}'" message |
 | GitHub rate limit hit | Show retry-after message; fall back to cached data if available |
 | GraphQL/contribution fetch fails | Render rest of dashboard; show placeholder for heatmap |
-| AI summary fails | Render rest of dashboard; show "Summary unavailable — retry" button |
+| Gemini API fails or rate-limited | Render rest of dashboard; show "Summary unavailable — retry" button |
 | Network/API timeout | Timeout at 10s per external call; show error toast |
 
 ## 8. Deployment
 
 - Hosted on **Vercel** (frontend + API routes together).
-- Environment variables: `GITHUB_TOKEN`, `AI_API_KEY`, `REDIS_URL` (or DB connection string) — set in Vercel project settings, never committed.
+- Environment variables: `GITHUB_TOKEN`, `GEMINI_API_KEY`, `MONGODB_URI` — set in Vercel project settings, never committed.
+- MongoDB Atlas: free M0 cluster, IP access list set to allow Vercel's outbound IPs (or `0.0.0.0/0` for simplicity in a portfolio project, with a strong DB user password).
 - CI: GitHub Actions to run lint/type-check on push (optional but strong resume signal).
 
 ## 9. Project Structure (suggested)
@@ -125,7 +130,7 @@ The frontend never calls GitHub or the AI API directly — all external calls ar
       [username].ts        -- aggregated profile+repo+language data
       contributions.ts     -- GraphQL contribution calendar
     /ai
-      summary.ts           -- AI summary generation
+      summary.ts           -- Gemini summary generation
   /dashboard/[username]
     page.tsx
 /components
@@ -136,8 +141,8 @@ The frontend never calls GitHub or the AI API directly — all external calls ar
   AISummaryCard.tsx
 /lib
   github.ts                -- GitHub API client
-  cache.ts                 -- Redis/DB cache helpers
-  ai.ts                    -- LLM client wrapper
+  db.ts                    -- MongoDB connection + cache read/write helpers
+  ai.ts                    -- Gemini client wrapper
   achievements.ts          -- badge/streak calculation logic
 ```
 
@@ -147,8 +152,8 @@ The frontend never calls GitHub or the AI API directly — all external calls ar
 - `graphql-request` — lightweight GraphQL client for contribution data
 - `recharts` — charts
 - `react-calendar-heatmap` (or custom SVG) — heatmap
-- `@anthropic-ai/sdk` or `openai` — AI summary
-- `ioredis` (if using Redis)
+- `@google/generative-ai` — official Gemini SDK
+- `mongodb` (official Node driver) or `mongoose` (if you prefer schema modeling) — MongoDB Atlas access
 
 ---
 *Next document: [UI/UX Design](./03-UIUX-Design.md)*
