@@ -1,6 +1,6 @@
 # GitHub Developer Dashboard
 
-A web application that lets you enter any public GitHub username and instantly view a rich, visual summary of their activity, skills, and achievements — with an AI-generated portfolio summary.
+A full-stack web application that lets you enter any public GitHub username and instantly view a rich, visual summary of their activity, skills, and achievements — with an AI-generated portfolio summary.
 
 ## Features
 
@@ -10,7 +10,7 @@ A web application that lets you enter any public GitHub username and instantly v
 - 🏆 **Achievement Badges** — 8 badges (Century Club, Polyglot, Star Collector, etc.)
 - 💻 **Language Breakdown** — donut chart with GitHub-consistent colors
 - 📦 **Repository Insights** — sortable grid (stars / recent / forks)
-- ✨ **AI Summary** — Gemini-powered 3-5 sentence portfolio summary
+- ✨ **AI Summary** — OpenAI & Smart Analytics powered developer summary
 - 🌙 **Dark/Light Mode** — persisted theme toggle
 - ⚡ **Progressive Loading** — skeleton loaders, independent section rendering
 - 🗄️ **MongoDB Caching** — TTL-based auto-expiry (1h / 6h / 24h per section)
@@ -24,7 +24,7 @@ A web application that lets you enter any public GitHub username and instantly v
 | Charts | Recharts |
 | Backend | Express.js (Node.js) |
 | Database | MongoDB Atlas (free M0 tier) |
-| AI | Google Gemini API (free tier) |
+| AI | OpenAI API & Smart Analytics Fallback Engine |
 | GitHub API | Octokit (REST) + GraphQL |
 
 ## Project Structure
@@ -42,20 +42,20 @@ Github_Dashboard/
 └── documentation/     # PRD, TRD, UI/UX, App Flow, Schema docs
 ```
 
-## Setup
+## Setup & Local Development
 
 ### Prerequisites
 - Node.js 18+
-- MongoDB Atlas account (free M0 tier)
+- MongoDB Atlas account
 - GitHub Personal Access Token
-- Google Gemini API Key
+- OpenAI API Key
 
 ### 1. Backend
 
 ```bash
 cd backend
 cp .env.example .env
-# Fill in GITHUB_TOKEN, GEMINI_API_KEY, MONGODB_URI in .env
+# Fill in GITHUB_TOKEN, OPENAI_API_KEY, MONGODB_URI in .env
 npm install
 npm run dev
 ```
@@ -69,7 +69,29 @@ npm install
 npm run dev
 ```
 
-Visit `http://localhost:3000` and enter any GitHub username!
+Visit `http://localhost:3000` or `http://localhost:3001` and enter any GitHub username!
+
+## Deployment Guide
+
+### Deploying Frontend (Vercel)
+1. Push your repository to GitHub.
+2. Go to [Vercel](https://vercel.com) and click **Add New Project**.
+3. Import your `Github-Dashboard` repository.
+4. Set **Root Directory** to `frontend`.
+5. Add Environment Variable:
+   - `NEXT_PUBLIC_API_URL`: Your deployed backend URL (e.g. `https://your-backend.onrender.com`)
+6. Click **Deploy**.
+
+### Deploying Backend (Render / Railway)
+1. Connect your repository on [Render](https://render.com) or [Railway](https://railway.app).
+2. Set **Root Directory** to `backend`.
+3. Set Build Command: `npm install`
+4. Set Start Command: `node server.js`
+5. Add Environment Variables:
+   - `GITHUB_TOKEN`: Your GitHub PAT
+   - `OPENAI_API_KEY`: Your OpenAI Key
+   - `MONGODB_URI`: Your MongoDB Atlas Connection String
+   - `FRONTEND_URL`: Your deployed frontend URL (e.g. `https://your-app.vercel.app`)
 
 ## API Endpoints
 
