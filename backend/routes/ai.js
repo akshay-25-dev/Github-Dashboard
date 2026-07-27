@@ -82,10 +82,10 @@ router.get("/summary", async (req, res) => {
       });
     }
 
-    res.status(500).json({
+    res.status(err.status === 429 ? 429 : 500).json({
       error: {
-        code: "AI_ERROR",
-        message: "Failed to generate AI summary. Please try again later.",
+        code: err.status === 429 ? "RATE_LIMITED" : "AI_ERROR",
+        message: err.message || "Failed to generate AI summary. Please try again later.",
       },
     });
   }
@@ -148,10 +148,10 @@ router.post("/summary/regenerate", async (req, res) => {
     res.json({ aiSummary, fromCache: false });
   } catch (err) {
     console.error(`Error regenerating AI summary for ${username}:`, err.message);
-    res.status(500).json({
+    res.status(err.status === 429 ? 429 : 500).json({
       error: {
-        code: "AI_ERROR",
-        message: "Failed to regenerate AI summary. Please try again later.",
+        code: err.status === 429 ? "RATE_LIMITED" : "AI_ERROR",
+        message: err.message || "Failed to regenerate AI summary. Please try again later.",
       },
     });
   }

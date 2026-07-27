@@ -38,7 +38,7 @@ export default function AISummaryCard({ aiSummary, username }) {
       setSummary(data.aiSummary);
       setCooldownEnd(Date.now() + COOLDOWN_MS);
     } catch (err) {
-      setError("Failed to regenerate summary. Please try again later.");
+      setError(err.message || "Failed to regenerate summary. Please try again later.");
     } finally {
       setLoading(false);
     }
